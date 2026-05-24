@@ -1,0 +1,68 @@
+name: Build Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_branch:
+        description: "Kernel branch to build"
+        required: true
+        default: "lineage-23.2"
+      kernel_config:
+        description: "Kernel config to build"
+        required: false
+        default: "mt6893_defconfig"
+
+jobs:
+  Build-Kernel:
+    strategy:
+      fail-fast: false
+    runs-on: ubuntu-22.04
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout current repository
+        uses: actions/checkout@v4
+        with:
+          path: kernel_workspace
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev build-essential ccache lld
+
+      - name: Clone toolchains
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/toolchains
+          cd $GITHUB_WORKSPACE/toolchains
+          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
+          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git gcc32
+          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git gcc64
+
+      - name: Compile kernel
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace
+          export PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$GITHUB_WORKSPACE/toolchains/gcc64/bin:$GITHUB_WORKSPACE/toolchains/gcc32/bin:$PATH
+          make O=out ARCH=arm64 mt6893_defconfig
+          make -j$(nproc) O=out ARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+            CONFIG_NO_ERROR_ON_MISMATCH=y \
+            LLVM=1 \
+            LLVM_IAS=1
+
+      - name: Package output
+        run: |
+          git clone --depth=1 https://github.com/liwhy1/AnyKernel3 anykernel
+          cp kernel_workspace/out/arch/arm64/boot/Image.gz-dtb anykernel/
+          cd anykernel
+          zip -r9 ../AnyKernel3-MT6893-Kernel.zip * -x .git* README.md
+          
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MT6893-Kernel-Zip
+          path: AnyKernel3-MT6893-Kernel.zip
